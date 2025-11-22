@@ -70,12 +70,429 @@ Subject to:
 
 ---
 
-## 4E.2 Quantum Signal Generation
+## 4E.2 Multi-Timeframe EMA Analysis
+
+### EMA Mathematical Foundation
+
+```
+Exponential Moving Average (EMA):
+
+EMA_t = α × Price_t + (1 - α) × EMA_{t-1}
+
+Where: α = 2 / (period + 1)
+
+EMA Periods: 20, 50, 100, 200
+Timeframes: 4-Hour (4H), Daily (1D)
+
+Multi-Timeframe Alignment Score:
+S_mtf = Σ_tf w_tf × Σ_ema w_ema × sign(Price - EMA_ema,tf)
+
+Where:
+- w_tf: Timeframe weight (Daily > 4H for trend)
+- w_ema: EMA period weight (200 > 100 > 50 > 20 for trend strength)
+```
+
+### EMA Trend States
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              EMA TREND CLASSIFICATION                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  STRONG BULLISH (Score: +4):                               │
+│  Price > EMA20 > EMA50 > EMA100 > EMA200                   │
+│  All EMAs sloping upward                                   │
+│                                                             │
+│  BULLISH (Score: +2 to +3):                                │
+│  Price > EMA20, EMA50; above EMA100 or EMA200              │
+│  Golden cross forming or present                           │
+│                                                             │
+│  NEUTRAL (Score: -1 to +1):                                │
+│  Mixed EMA positions                                        │
+│  Consolidation or transition phase                         │
+│                                                             │
+│  BEARISH (Score: -2 to -3):                                │
+│  Price < EMA20, EMA50; below EMA100 or EMA200              │
+│  Death cross forming or present                            │
+│                                                             │
+│  STRONG BEARISH (Score: -4):                               │
+│  Price < EMA20 < EMA50 < EMA100 < EMA200                   │
+│  All EMAs sloping downward                                 │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Quantum EMA Calculator
+
+```python
+import numpy as np
+from qiskit import QuantumCircuit
+from qiskit_aer import AerSimulator
+
+class QuantumEMACalculator:
+    """
+    Multi-timeframe EMA analysis with quantum signal generation
+
+    EMA Periods: 20, 50, 100, 200
+    Timeframes: 4-Hour (4H), Daily (1D)
+
+    Part of Universal Rebalancing Theory by Mardochée JOSEPH
+    """
+
+    EMA_PERIODS = [20, 50, 100, 200]
+    TIMEFRAMES = ['4H', '1D']
+
+    def __init__(self):
+        self.ema_weights = {
+            20: 0.15,   # Short-term momentum
+            50: 0.25,   # Medium-term trend
+            100: 0.30,  # Long-term trend
+            200: 0.30   # Major trend
+        }
+        self.timeframe_weights = {
+            '4H': 0.4,  # Faster signals
+            '1D': 0.6   # Stronger trend confirmation
+        }
+
+    def calculate_ema(self, prices, period):
+        """
+        Calculate Exponential Moving Average
+
+        EMA_t = α × Price_t + (1 - α) × EMA_{t-1}
+        α = 2 / (period + 1)
+        """
+        if len(prices) < period:
+            return None
+
+        alpha = 2 / (period + 1)
+        ema = [np.mean(prices[:period])]  # SMA for first value
+
+        for price in prices[period:]:
+            ema.append(alpha * price + (1 - alpha) * ema[-1])
+
+        return ema
+
+    def calculate_all_emas(self, price_data):
+        """
+        Calculate all EMAs for all timeframes
+
+        Returns:
+        {
+            '4H': {20: [...], 50: [...], 100: [...], 200: [...]},
+            '1D': {20: [...], 50: [...], 100: [...], 200: [...]}
+        }
+        """
+        emas = {}
+
+        for tf in self.TIMEFRAMES:
+            emas[tf] = {}
+            prices = price_data.get(tf, [])
+
+            for period in self.EMA_PERIODS:
+                ema = self.calculate_ema(prices, period)
+                emas[tf][period] = ema if ema else []
+
+        return emas
+
+    def get_ema_position_score(self, current_price, emas, timeframe):
+        """
+        Calculate position score relative to EMAs
+
+        +1 for each EMA below price
+        -1 for each EMA above price
+        Weighted by EMA period importance
+        """
+        score = 0
+
+        for period in self.EMA_PERIODS:
+            if emas[timeframe][period]:
+                ema_value = emas[timeframe][period][-1]
+                weight = self.ema_weights[period]
+
+                if current_price > ema_value:
+                    score += weight
+                else:
+                    score -= weight
+
+        return score
+
+    def get_ema_alignment_score(self, emas, timeframe):
+        """
+        Check if EMAs are properly aligned (stacked)
+
+        Perfect bullish: EMA20 > EMA50 > EMA100 > EMA200
+        Perfect bearish: EMA20 < EMA50 < EMA100 < EMA200
+        """
+        values = []
+        for period in self.EMA_PERIODS:
+            if emas[timeframe][period]:
+                values.append(emas[timeframe][period][-1])
+            else:
+                return 0  # Not enough data
+
+        # Check alignment
+        bullish_aligned = all(values[i] > values[i+1] for i in range(len(values)-1))
+        bearish_aligned = all(values[i] < values[i+1] for i in range(len(values)-1))
+
+        if bullish_aligned:
+            return 1.0
+        elif bearish_aligned:
+            return -1.0
+        else:
+            # Partial alignment score
+            bullish_count = sum(1 for i in range(len(values)-1) if values[i] > values[i+1])
+            return (bullish_count - 1.5) / 1.5  # Scale to [-1, 1]
+
+    def get_ema_slope(self, emas, timeframe, lookback=5):
+        """
+        Calculate EMA slope (momentum of the trend)
+        """
+        slopes = {}
+
+        for period in self.EMA_PERIODS:
+            ema_values = emas[timeframe][period]
+            if len(ema_values) >= lookback:
+                slope = (ema_values[-1] - ema_values[-lookback]) / ema_values[-lookback]
+                slopes[period] = slope
+            else:
+                slopes[period] = 0
+
+        # Weighted average slope
+        total_slope = sum(slopes[p] * self.ema_weights[p] for p in self.EMA_PERIODS)
+        return total_slope
+
+    def detect_crossovers(self, emas, timeframe):
+        """
+        Detect golden cross and death cross
+
+        Golden Cross: EMA50 crosses above EMA200 (bullish)
+        Death Cross: EMA50 crosses below EMA200 (bearish)
+        """
+        ema50 = emas[timeframe][50]
+        ema200 = emas[timeframe][200]
+
+        if len(ema50) < 2 or len(ema200) < 2:
+            return {'golden_cross': False, 'death_cross': False, 'score': 0}
+
+        # Current and previous positions
+        current_above = ema50[-1] > ema200[-1]
+        prev_above = ema50[-2] > ema200[-2]
+
+        golden_cross = current_above and not prev_above
+        death_cross = not current_above and prev_above
+
+        # Also check EMA20/EMA50 for faster signals
+        ema20 = emas[timeframe][20]
+        if len(ema20) >= 2:
+            fast_golden = ema20[-1] > ema50[-1] and ema20[-2] <= ema50[-2]
+            fast_death = ema20[-1] < ema50[-1] and ema20[-2] >= ema50[-2]
+        else:
+            fast_golden = fast_death = False
+
+        # Score crossovers
+        score = 0
+        if golden_cross:
+            score += 1.0  # Major bullish signal
+        if death_cross:
+            score -= 1.0  # Major bearish signal
+        if fast_golden:
+            score += 0.5  # Minor bullish signal
+        if fast_death:
+            score -= 0.5  # Minor bearish signal
+
+        return {
+            'golden_cross': golden_cross,
+            'death_cross': death_cross,
+            'fast_golden': fast_golden,
+            'fast_death': fast_death,
+            'score': score
+        }
+
+    def calculate_mtf_signal(self, current_price, price_data):
+        """
+        Calculate Multi-Timeframe EMA signal
+
+        Combines 4H and Daily timeframes with all EMA periods
+        """
+        emas = self.calculate_all_emas(price_data)
+
+        total_score = 0
+        signals = {}
+
+        for tf in self.TIMEFRAMES:
+            tf_weight = self.timeframe_weights[tf]
+
+            # Position relative to EMAs
+            position_score = self.get_ema_position_score(current_price, emas, tf)
+
+            # EMA alignment
+            alignment_score = self.get_ema_alignment_score(emas, tf)
+
+            # EMA slopes
+            slope_score = self.get_ema_slope(emas, tf) * 10  # Scale up
+
+            # Crossovers
+            crossover = self.detect_crossovers(emas, tf)
+            crossover_score = crossover['score']
+
+            # Combined timeframe score
+            tf_score = (
+                0.30 * position_score +
+                0.25 * alignment_score +
+                0.25 * np.clip(slope_score, -1, 1) +
+                0.20 * crossover_score
+            )
+
+            signals[tf] = {
+                'position': position_score,
+                'alignment': alignment_score,
+                'slope': slope_score,
+                'crossover': crossover_score,
+                'combined': tf_score
+            }
+
+            total_score += tf_weight * tf_score
+
+        # Final signal classification
+        if total_score > 0.6:
+            signal = 'STRONG_BUY'
+        elif total_score > 0.2:
+            signal = 'BUY'
+        elif total_score < -0.6:
+            signal = 'STRONG_SELL'
+        elif total_score < -0.2:
+            signal = 'SELL'
+        else:
+            signal = 'NEUTRAL'
+
+        return {
+            'score': total_score,
+            'signal': signal,
+            'timeframe_signals': signals,
+            'emas': emas
+        }
+
+
+class QuantumEMAHamiltonian:
+    """
+    Build quantum Hamiltonian incorporating EMA signals
+
+    URT + EMA Integration for optimal trading decisions
+    """
+
+    def __init__(self, ema_calculator):
+        self.ema_calc = ema_calculator
+
+    def build_ema_hamiltonian(self, assets, price_data):
+        """
+        Build Hamiltonian with EMA signal terms
+
+        Ĥ_ema = Σᵢ [w_pos × position_i + w_align × align_i +
+                    w_slope × slope_i + w_cross × cross_i] × Ẑᵢ
+        """
+        H = {}
+
+        for i, asset in enumerate(assets):
+            asset_prices = price_data.get(asset, {})
+            current_price = asset_prices.get('current', 0)
+
+            # Calculate EMA signal
+            ema_signal = self.ema_calc.calculate_mtf_signal(
+                current_price,
+                {
+                    '4H': asset_prices.get('prices_4h', []),
+                    '1D': asset_prices.get('prices_1d', [])
+                }
+            )
+
+            # EMA contribution to Hamiltonian
+            # Negative because QAOA minimizes
+            H[(i,)] = -ema_signal['score']
+
+        return H
+
+    def build_combined_urt_ema_hamiltonian(self, assets, price_data,
+                                           expected_returns, covariance,
+                                           ema_weight=0.4):
+        """
+        Combined URT + EMA Hamiltonian
+
+        Ĥ_total = (1-w) × Ĥ_urt + w × Ĥ_ema
+
+        Where:
+        - Ĥ_urt: Standard URT optimization (returns, risk, costs)
+        - Ĥ_ema: EMA trend-following signals
+        """
+        n = len(assets)
+        H = {}
+
+        # URT component: Returns
+        for i in range(n):
+            H[(i,)] = -(1 - ema_weight) * expected_returns[i]
+
+        # URT component: Risk (covariance)
+        risk_aversion = 0.5
+        for i in range(n):
+            for j in range(i, n):
+                H[(i, j)] = (1 - ema_weight) * risk_aversion * covariance[i, j]
+
+        # EMA component
+        ema_H = self.build_ema_hamiltonian(assets, price_data)
+        for term, coeff in ema_H.items():
+            if term in H:
+                H[term] += ema_weight * coeff
+            else:
+                H[term] = ema_weight * coeff
+
+        return H
+```
+
+### Multi-Timeframe EMA Visualization
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              MULTI-TIMEFRAME EMA DASHBOARD                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  DAILY TIMEFRAME (Weight: 60%)                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Price ████████████████████████░░░░░░░░░ $52,450     │   │
+│  │ EMA20 ███████████████████████░░░░░░░░░░ $51,200 ✓   │   │
+│  │ EMA50 ██████████████████████░░░░░░░░░░░ $49,800 ✓   │   │
+│  │ EMA100████████████████████░░░░░░░░░░░░░ $48,100 ✓   │   │
+│  │ EMA200███████████████████░░░░░░░░░░░░░░ $45,500 ✓   │   │
+│  │                                                     │   │
+│  │ Alignment: BULLISH (EMA20 > EMA50 > EMA100 > EMA200)│   │
+│  │ Slope: +0.034 (Uptrend)                            │   │
+│  │ Signal: BUY (+0.72)                                │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  4-HOUR TIMEFRAME (Weight: 40%)                            │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ Price ████████████████████████░░░░░░░░░ $52,450     │   │
+│  │ EMA20 ████████████████████████░░░░░░░░░ $52,100 ✓   │   │
+│  │ EMA50 ███████████████████████░░░░░░░░░░ $51,600 ✓   │   │
+│  │ EMA100███████████████████████░░░░░░░░░░ $50,900 ✓   │   │
+│  │ EMA200██████████████████████░░░░░░░░░░░ $49,200 ✓   │   │
+│  │                                                     │   │
+│  │ Alignment: BULLISH                                 │   │
+│  │ Slope: +0.021 (Uptrend)                            │   │
+│  │ Signal: BUY (+0.65)                                │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  COMBINED MTF SIGNAL: STRONG BUY (+0.69)                   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 4E.3 Quantum Signal Generation with EMA
 
 ### Trading Signal Hamiltonian
 
 ```
-Ĥ_signal = Ĥ_momentum + Ĥ_mean_reversion + Ĥ_fundamental + Ĥ_sentiment
+Ĥ_signal = Ĥ_ema + Ĥ_momentum + Ĥ_mean_reversion + Ĥ_fundamental + Ĥ_sentiment
 
 Components:
 
@@ -92,17 +509,24 @@ Components:
               (Follow market sentiment)
 ```
 
-### QAOA Signal Generator
+### QAOA Signal Generator with EMA
 
 ```python
 class QuantumSignalGenerator:
     """
     Generate trading signals using QAOA optimization
+
+    Integrates EMA (20, 50, 100, 200) on 4H and Daily timeframes
+    with URT optimization framework
+
+    Part of Universal Rebalancing Theory by Mardochée JOSEPH
     """
 
     def __init__(self, universe):
         self.universe = universe
         self.n_assets = len(universe)
+        self.ema_calculator = QuantumEMACalculator()
+        self.ema_hamiltonian = QuantumEMAHamiltonian(self.ema_calculator)
 
     def calculate_momentum(self, prices, lookback=20):
         """
@@ -134,9 +558,38 @@ class QuantumSignalGenerator:
 
         return signals
 
+    def calculate_ema_signals(self, market_data):
+        """
+        Calculate EMA signals for all assets across timeframes
+
+        Uses EMA 20, 50, 100, 200 on 4H and Daily
+        """
+        ema_signals = {}
+
+        for asset in self.universe:
+            asset_data = market_data.get('mtf_prices', {}).get(asset, {})
+            current_price = market_data['prices'].get(asset, [0])[-1]
+
+            price_data = {
+                '4H': asset_data.get('4H', market_data['prices'].get(asset, [])),
+                '1D': asset_data.get('1D', market_data['prices'].get(asset, []))
+            }
+
+            ema_result = self.ema_calculator.calculate_mtf_signal(current_price, price_data)
+            ema_signals[asset] = ema_result
+
+        return ema_signals
+
     def build_signal_hamiltonian(self, market_data, strategy_weights):
         """
         Build Hamiltonian for signal generation
+
+        Integrates:
+        - EMA signals (20, 50, 100, 200 on 4H and Daily)
+        - Momentum
+        - Mean reversion
+        - Fundamentals
+        - Sentiment
 
         strategy_weights: dict with weights for each signal type
         """
@@ -148,24 +601,32 @@ class QuantumSignalGenerator:
         fundamental = market_data.get('fundamental_scores', {})
         sentiment = market_data.get('sentiment_scores', {})
 
+        # Calculate EMA signals for all assets
+        ema_signals = self.calculate_ema_signals(market_data)
+
         # Combine into Hamiltonian
         for i, asset in enumerate(self.universe):
             signal = 0
 
+            # EMA component (NEW - Primary trend signal)
+            ema_weight = strategy_weights.get('ema', 0.35)
+            ema_score = ema_signals.get(asset, {}).get('score', 0)
+            signal += ema_weight * ema_score
+
             # Momentum component
-            mom_weight = strategy_weights.get('momentum', 0.3)
+            mom_weight = strategy_weights.get('momentum', 0.20)
             signal += mom_weight * momentum.get(asset, 0)
 
             # Mean reversion component
-            mr_weight = strategy_weights.get('mean_reversion', 0.3)
+            mr_weight = strategy_weights.get('mean_reversion', 0.20)
             signal += mr_weight * mean_rev.get(asset, 0)
 
             # Fundamental component
-            fund_weight = strategy_weights.get('fundamental', 0.2)
+            fund_weight = strategy_weights.get('fundamental', 0.15)
             signal += fund_weight * fundamental.get(asset, 0)
 
             # Sentiment component
-            sent_weight = strategy_weights.get('sentiment', 0.2)
+            sent_weight = strategy_weights.get('sentiment', 0.10)
             signal += sent_weight * sentiment.get(asset, 0)
 
             H[(i,)] = -signal  # Negative because we maximize
@@ -177,6 +638,43 @@ class QuantumSignalGenerator:
                 H[(i, j)] = 0.5 * corr_matrix[i, j]
 
         return H
+
+    def get_ema_analysis(self, market_data):
+        """
+        Get detailed EMA analysis for reporting
+
+        Returns EMA values, crossovers, and signals for each timeframe
+        """
+        analysis = {}
+
+        for asset in self.universe:
+            asset_data = market_data.get('mtf_prices', {}).get(asset, {})
+            current_price = market_data['prices'].get(asset, [0])[-1]
+
+            price_data = {
+                '4H': asset_data.get('4H', market_data['prices'].get(asset, [])),
+                '1D': asset_data.get('1D', market_data['prices'].get(asset, []))
+            }
+
+            ema_result = self.ema_calculator.calculate_mtf_signal(current_price, price_data)
+
+            analysis[asset] = {
+                'current_price': current_price,
+                'signal': ema_result['signal'],
+                'score': ema_result['score'],
+                'timeframes': ema_result['timeframe_signals'],
+                'ema_values': {}
+            }
+
+            # Extract latest EMA values
+            for tf in ['4H', '1D']:
+                analysis[asset]['ema_values'][tf] = {}
+                for period in [20, 50, 100, 200]:
+                    ema_list = ema_result['emas'][tf][period]
+                    if ema_list:
+                        analysis[asset]['ema_values'][tf][period] = ema_list[-1]
+
+        return analysis
 
     def generate_signals(self, market_data, strategy_weights):
         """
@@ -910,7 +1408,10 @@ class QuantumTradingSystem:
 # Main execution
 def run_quantum_trading():
     """
-    Run the quantum trading system
+    Run the quantum trading system with EMA integration
+
+    Uses EMA 20, 50, 100, 200 on 4H and Daily timeframes
+    Combined with URT optimization framework
     """
     config = {
         'universe': ['BTC', 'ETH', 'AAPL', 'GOOGL', 'EUR/USD', 'GLD'],
@@ -920,10 +1421,17 @@ def run_quantum_trading():
             {'name': 'DarkPool', 'fee': 0.0005}
         ],
         'strategy_weights': {
-            'momentum': 0.3,
-            'mean_reversion': 0.3,
-            'fundamental': 0.2,
-            'sentiment': 0.2
+            'ema': 0.35,           # EMA multi-timeframe signal (PRIMARY)
+            'momentum': 0.20,      # Price momentum
+            'mean_reversion': 0.20,# Mean reversion
+            'fundamental': 0.15,   # Fundamental analysis
+            'sentiment': 0.10      # Market sentiment
+        },
+        'ema_config': {
+            'periods': [20, 50, 100, 200],
+            'timeframes': ['4H', '1D'],
+            'timeframe_weights': {'4H': 0.4, '1D': 0.6},
+            'period_weights': {20: 0.15, 50: 0.25, 100: 0.30, 200: 0.30}
         },
         'total_capital': 1000000,
         'max_var': 0.02,
@@ -933,15 +1441,41 @@ def run_quantum_trading():
 
     system = QuantumTradingSystem(config)
 
-    # Simulated market data
+    # Generate multi-timeframe price data for EMA calculation
+    def generate_mtf_prices(base_price, volatility, name):
+        """Generate 4H and Daily price series"""
+        np.random.seed(hash(name) % 2**32)
+
+        # Daily prices (250 days for EMA200)
+        daily_returns = np.random.randn(300) * volatility
+        daily_prices = base_price * np.exp(np.cumsum(daily_returns))
+
+        # 4H prices (6 candles per day, 250 days)
+        h4_returns = np.random.randn(300 * 6) * (volatility / np.sqrt(6))
+        h4_prices = base_price * np.exp(np.cumsum(h4_returns))
+
+        return {
+            '4H': list(h4_prices),
+            '1D': list(daily_prices)
+        }
+
+    # Simulated market data with multi-timeframe prices
     market_data = {
         'prices': {
-            'BTC': list(np.random.randn(100).cumsum() + 50000),
-            'ETH': list(np.random.randn(100).cumsum() + 3000),
-            'AAPL': list(np.random.randn(100).cumsum() + 150),
-            'GOOGL': list(np.random.randn(100).cumsum() + 140),
-            'EUR/USD': list(np.random.randn(100).cumsum() * 0.01 + 1.10),
-            'GLD': list(np.random.randn(100).cumsum() + 180)
+            'BTC': list(np.random.randn(300).cumsum() * 500 + 50000),
+            'ETH': list(np.random.randn(300).cumsum() * 30 + 3000),
+            'AAPL': list(np.random.randn(300).cumsum() * 2 + 150),
+            'GOOGL': list(np.random.randn(300).cumsum() * 2 + 140),
+            'EUR/USD': list(np.random.randn(300).cumsum() * 0.001 + 1.10),
+            'GLD': list(np.random.randn(300).cumsum() * 1.5 + 180)
+        },
+        'mtf_prices': {
+            'BTC': generate_mtf_prices(50000, 0.03, 'BTC'),
+            'ETH': generate_mtf_prices(3000, 0.04, 'ETH'),
+            'AAPL': generate_mtf_prices(150, 0.02, 'AAPL'),
+            'GOOGL': generate_mtf_prices(140, 0.02, 'GOOGL'),
+            'EUR/USD': generate_mtf_prices(1.10, 0.005, 'EUR/USD'),
+            'GLD': generate_mtf_prices(180, 0.01, 'GLD')
         },
         'fair_values': {'BTC': 52000, 'ETH': 3100, 'AAPL': 155, 'GOOGL': 145, 'EUR/USD': 1.12, 'GLD': 185},
         'volatility': 0.02,
@@ -954,11 +1488,40 @@ def run_quantum_trading():
     # Run trading cycle
     results = system.run_trading_cycle(market_data, current_portfolio)
 
-    print("\n=== Quantum Trading Results ===")
-    print(f"\nSignals: {results['signals']}")
-    print(f"\nRisk Metrics: VaR={results['risk']['VaR']:.2f}, CVaR={results['risk']['CVaR']:.2f}")
-    print(f"\nOrders: {len(results['orders'])} orders generated")
+    # Get EMA analysis
+    ema_analysis = system.signal_generator.get_ema_analysis(market_data)
 
+    print("\n" + "="*60)
+    print("       QUANTUM TRADING SYSTEM WITH EMA + URT")
+    print("="*60)
+
+    print("\n--- EMA Multi-Timeframe Analysis ---")
+    for asset, data in ema_analysis.items():
+        print(f"\n{asset}:")
+        print(f"  Current Price: ${data['current_price']:,.2f}")
+        print(f"  EMA Signal: {data['signal']} (Score: {data['score']:.3f})")
+
+        for tf in ['1D', '4H']:
+            tf_data = data['timeframes'].get(tf, {})
+            ema_vals = data['ema_values'].get(tf, {})
+            print(f"  {tf}: Position={tf_data.get('position', 0):.2f}, "
+                  f"Alignment={tf_data.get('alignment', 0):.2f}")
+            if ema_vals:
+                print(f"       EMA20=${ema_vals.get(20, 0):,.2f}, "
+                      f"EMA50=${ema_vals.get(50, 0):,.2f}, "
+                      f"EMA100=${ema_vals.get(100, 0):,.2f}, "
+                      f"EMA200=${ema_vals.get(200, 0):,.2f}")
+
+    print("\n--- Trading Signals ---")
+    for asset, signal in results['signals'].items():
+        ema_sig = ema_analysis[asset]['signal']
+        print(f"  {asset}: {signal:+.2f} (EMA: {ema_sig})")
+
+    print(f"\n--- Risk Metrics ---")
+    print(f"  VaR (95%): ${results['risk']['VaR']:,.2f}")
+    print(f"  CVaR (95%): ${results['risk']['CVaR']:,.2f}")
+
+    print(f"\n--- Orders Generated: {len(results['orders'])} ---")
     for order in results['orders'][:5]:
         print(f"  {order['side'].upper()} {order['quantity']:.0f} {order['asset']}")
 
@@ -973,11 +1536,26 @@ if __name__ == "__main__":
 
 ## 4E.7 Summary
 
-### Quantum Trading Key Equations
+### Quantum Trading Key Equations with EMA
 
 ```
+EMA Calculation:
+EMA_t = α × Price_t + (1 - α) × EMA_{t-1}
+α = 2 / (period + 1)
+Periods: 20, 50, 100, 200
+Timeframes: 4H (weight=0.4), Daily (weight=0.6)
+
+Multi-Timeframe EMA Score:
+S_mtf = Σ_tf w_tf × [0.30×position + 0.25×alignment + 0.25×slope + 0.20×crossover]
+
+Combined URT + EMA Signal Hamiltonian:
+Ĥ_signal = Ĥ_ema + Ĥ_momentum + Ĥ_mean_reversion + Ĥ_fundamental + Ĥ_sentiment
+
+Where:
+Ĥ_ema = -Σᵢ [w_ema × S_mtf(asset_i)] × Ẑᵢ
+
 Signal Generation (QAOA):
-Ĥ_signal = -Σᵢ (w_mom×mom_i + w_mr×mr_i + w_fund×fund_i) × Ẑᵢ
+Ĥ_total = -Σᵢ (0.35×ema_i + 0.20×mom_i + 0.20×mr_i + 0.15×fund_i + 0.10×sent_i) × Ẑᵢ
 
 Execution Optimization:
 Ĥ_exec = Σₜ [impact(qₜ) + timing_risk(t)] × Ẑₜ
@@ -991,23 +1569,50 @@ VaR (CV):
 VaR = Percentile(Measurements, 1-α)
 ```
 
+### EMA Signal Classification
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              EMA SIGNAL CLASSIFICATION                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Score > +0.6   →  STRONG_BUY   (Full position)            │
+│  Score > +0.2   →  BUY          (Partial position)         │
+│  Score -0.2 to +0.2  →  NEUTRAL (Hold/reduce)              │
+│  Score < -0.2   →  SELL         (Partial exit)             │
+│  Score < -0.6   →  STRONG_SELL  (Full exit)                │
+│                                                             │
+│  Crossover Signals:                                         │
+│  • Golden Cross (EMA50 > EMA200): +1.0 score bonus         │
+│  • Death Cross (EMA50 < EMA200): -1.0 score penalty        │
+│  • Fast Golden (EMA20 > EMA50): +0.5 score bonus           │
+│  • Fast Death (EMA20 < EMA50): -0.5 score penalty          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### Trading System Performance
 
 | Component | Classical | Quantum | Improvement |
 |-----------|-----------|---------|-------------|
-| Signal generation | O(n²) | O(√n²) | Quadratic |
+| EMA signal generation | O(n×p×t) | O(√n) | Quadratic |
+| Multi-asset optimization | O(n²) | O(√n²) | Quadratic |
 | Order routing | O(V^10) | O(V^5) | Quadratic |
 | VaR calculation | Monte Carlo | CV sampling | Native distributions |
 | Arbitrage detection | O(n³) | O(n^1.5) | Quadratic |
+
+Where: n=assets, p=EMA periods, t=timeframes, V=venues
 
 ---
 
 ## Exercises
 
-1. Implement a quantum momentum signal generator for 10 assets.
-2. Create a quantum VWAP execution algorithm.
-3. Build a quantum market making system with inventory management.
-4. Design a quantum statistical arbitrage system for crypto pairs.
+1. Implement a multi-timeframe EMA signal generator for 10 assets using 4H and Daily data.
+2. Create a quantum VWAP execution algorithm that incorporates EMA trend direction.
+3. Build a quantum market making system that adjusts spread based on EMA alignment.
+4. Design a quantum statistical arbitrage system using EMA crossover signals.
+5. Implement golden cross / death cross detection with quantum pattern matching.
+6. Create a backtesting framework for the URT + EMA quantum trading system.
 
 ---
 
